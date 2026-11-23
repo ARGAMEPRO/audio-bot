@@ -8,9 +8,12 @@ yt-dlp (sponsorblock), на выходе mp3 192 kbps.
 """
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
+import urllib.parse
+import urllib.request
 import uuid
 
 import yt_dlp
@@ -26,6 +29,41 @@ MAX_MINUTES = 40       # длиннее не берём: дольше качат
 WORKDIR = os.getenv("WORKDIR", tempfile.gettempdir())
 
 dp = Dispatcher()
+
+
+def raw(method: str, **params) -> None:
+    """Вызов метода Bot API напрямую: aiogram не знает про style и copy_text в кнопках."""
+    data = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            data[key] = json.dumps(value, ensure_ascii=False)
+        else:
+            data[key] = str(value)
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{TOKEN}/{method}",
+        data=urllib.parse.urlencode(data).encode(),
+    )
+    try:
+        urllib.request.urlopen(request, timeout=20).read()
+    except Exception:
+        pass  # кнопки — украшение, из-за них бот падать не должен
+
+
+def after_file(chat_id: int, url: str, title: str) -> None:
+    """Кнопка «скопировать ссылку» со style — возможности Bot API 10.4."""
+    raw(
+        "sendMessage",
+        chat_id=chat_id,
+        text=f"<b>{title[:80]}</b>\nЕсли понадобится ещё раз — ссылка под рукой.",
+        parse_mode="HTML",
+        reply_markup={
+            "inline_keyboard": [[
+                {"text": "Скопировать ссылку", "copy_text": {"text": url[:250]}, "style": "primary"},
+            ]]
+        },
+    )
 
 
 def download(url: str, folder: str) -> str:
@@ -119,6 +157,7 @@ async def handle_link(message: Message) -> None:
             FSInputFile(mp3, filename=os.path.basename(mp3)),
             title=os.path.splitext(os.path.basename(mp3))[0],
         )
+        after_file(message.chat.id, url, os.path.splitext(os.path.basename(mp3))[0])
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
